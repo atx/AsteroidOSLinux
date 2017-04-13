@@ -3,29 +3,27 @@
 import argparse
 import datetime
 import itertools
+import struct
 import time
-from bluetooth import ble
+import bleee
+from gi.repository import GLib
 
 class Asteroid:
 
     UUID_BATTERY = "0000180f-0000-1000-8000-00805f9b34fb"
     UUID_TIME = "00005001-0000-0000-0000-00a57e401d05"
+    UUID_SCREENSHOT_REQ = "00006001-0000-0000-0000-00a57e401d05"
+    UUID_SCREENSHOT_RESP = "00006002-0000-0000-0000-00a57e401d05"
 
     def __init__(self, address):
-        self.dev = ble.GATTRequester(address)
-        # Not waiting here leads to segfault on characteristics enumeration...
-        # TODO: Fix pybluez/gattlib/whatever
-        while not self.dev.is_connected():
-            time.sleep(0.2)
-        time.sleep(1)
-        chars = itertools.groupby(self.dev.discover_characteristics(),
-                                       lambda x: x["uuid"])
-        self.characteristics = {k: list(v)[0] for k, v in chars}
-        self.handle_battery = self.characteristics[Asteroid.UUID_BATTERY]
-        self.handle_time = self.characteristics[Asteroid.UUID_TIME]
+        self.ble = bleee.BLE()
+        self.address = address
+        self.dev = self.ble.device_by_address(self.address)
+        # TODO: Manage this more properly
+        self.dev.connect()
 
     def battery_level(self):
-        return int(self.dev.read_by_handle(self.handle_battery["value_handle"])[0])
+        return int(self.dev.char_by_uuid(Asteroid.UUID_BATTERY).read())
 
     def update_time(self, to=None):
         if to is None:
@@ -38,7 +36,20 @@ class Asteroid:
             to.minute,
             to.second
         ]
-        self.dev.write_by_handle(asteroid.handle_time["value_handle"], bytes(data))
+        self.dev.char_by_uuid(Asteroid.UUID_TIME).write(data)
+
+    def screenshot(self):
+        # TODO: This disconnects after a few callbacks, fix
+        crsp = self.dev.char_by_uuid(Asteroid.UUID_SCREENSHOT_RESP)
+        loop = GLib.MainLoop()
+        data_rem = None
+        def cb(*args):
+            print(args)
+            #loop.quit()
+        crsp.start_notify()
+        crsp.properties_changed.connect(cb)
+        self.dev.char_by_uuid(Asteroid.UUID_SCREENSHOT_REQ).write(b"\x00")
+        loop.run()
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="AsteroidOSLinux")
