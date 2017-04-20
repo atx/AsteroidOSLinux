@@ -21,8 +21,6 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    loop = GLib.MainLoop()
-
     session_bus = dbus.SessionBus()
     asteroid = Asteroid(args.address)
 
@@ -52,6 +50,7 @@ if __name__ == "__main__":
                                            "Notify",
                                            on_notification)
 
+    loop = GLib.MainLoop(GLib.main_context_default())
     if args.interactive:
         import IPython
         IPython.embed()

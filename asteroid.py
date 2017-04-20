@@ -1,6 +1,7 @@
 
 import argparse
 import datetime
+import functools
 import itertools
 import random
 import struct
@@ -8,6 +9,29 @@ import time
 import xml
 import bleee
 from gi.repository import GLib
+
+
+def ensure_connected(fn):
+    @functools.wraps(fn)
+    def wrapper(self, *args, **kwargs):
+        # Note that this does not really strongly guarantee anything as the
+        # device can disconnect at any time
+        # We also want to wait until services are resolved
+        while not self.dev.connected or not self.dev.services_resolved:
+            if not self.dev.connected:
+                try:
+                    # Problematically, dbus calls block the entire event loop
+                    # TODO: Fix this
+                    self.dev.connect()
+                except Exception as e:
+                    if e.args[0] != "GDBus.Error:org.bluez.Error.Failed: Operation already in progress'":
+                        raise
+            else:
+                time.sleep(0.1)
+        ret = fn(self, *args, **kwargs)
+        # Do we want to schedule a disconnect? Or is BLE low power enough?
+        return ret
+    return wrapper
 
 
 class Asteroid:
@@ -22,12 +46,14 @@ class Asteroid:
         self.ble = bleee.BLE()
         self.address = address
         self.dev = self.ble.device_by_address(self.address)
-        # TODO: Manage this more properly
-        self.dev.connect()
+        self.disconnect_timeout = None
+        self._disconnect_id = None
 
+    @ensure_connected
     def battery_level(self):
         return self.dev.char_by_uuid(Asteroid.UUID_BATTERY).read()[0]
 
+    @ensure_connected
     def update_time(self, to=None):
         if to is None:
             to = datetime.datetime.now()
@@ -41,6 +67,7 @@ class Asteroid:
         ]
         self.dev.char_by_uuid(Asteroid.UUID_TIME).write(data)
 
+    @ensure_connected
     def screenshot(self):
         # TODO: This disconnects after a few callbacks, fix
         crsp = self.dev.char_by_uuid(Asteroid.UUID_SCREENSHOT_RESP)
@@ -54,6 +81,7 @@ class Asteroid:
         self.dev.char_by_uuid(Asteroid.UUID_SCREENSHOT_REQ).write(b"\x00")
         loop.run()
 
+    @ensure_connected
     def notify(self, summary, body=None, id_=None, package_name=None,
                app_name=None, app_icon=None):
         if id_ is None:
