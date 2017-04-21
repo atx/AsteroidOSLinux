@@ -57,8 +57,13 @@ class AsteroidCmd(cmd.Cmd):
     def __init__(self, asteroid, loop):
         super(AsteroidCmd, self).__init__()
         self.asteroid = asteroid
+        self.asteroid.dev.properties_changed.connect(self._changed_callback)
         self.loop = loop
         self.exiting = False
+
+    def _changed_callback(self, name, changed, lst):
+        for k, v in changed.items():
+            Print.info("Changed %s = %s" % (k, v))
 
     @in_glib
     def do_battery(self, line):
