@@ -7,7 +7,7 @@ import random
 import struct
 import time
 import xml
-import bleee
+from asteroid import bleee
 from gi.repository import GLib
 
 

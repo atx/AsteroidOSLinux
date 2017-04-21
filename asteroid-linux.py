@@ -106,6 +106,7 @@ class CmdThread(threading.Thread):
         self.cmd.cmdloop("")
 
 
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="AsteroidOSLinux")
     parser.add_argument(
