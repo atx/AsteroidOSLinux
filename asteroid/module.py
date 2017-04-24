@@ -1,4 +1,5 @@
 
+import time
 import logging
 import queue
 import threading
@@ -66,23 +67,43 @@ class TimeSyncModule(Module):
 class ReconnectModule(Module):
 
     name = "reconnect"
+    defconfig = {"timeout_base": 5,
+                 "timeout_max": 300,
+                 "timeout_reset": 120}
 
     def __init__(self, asteroid, config):
         super(ReconnectModule, self).__init__(asteroid, config)
-        if not asteroid.dev.connected:
-            self._start_reconnect_async()
+        self._last_connected = 0.0
+        self._timeout = 0
+        self._condvar = threading.Condition()
+        threading.Thread(target=self._reconnect_fn).start()
 
     def _reconnect_fn(self):
-        self.logger.info("Reconnecting...")
-        self.asteroid.connect()
-        self.logger.info("Connected!")
-
-    def _start_reconnect_async(self):
-        threading.Thread(target=self._reconnect_fn).start()
+        while True:
+            self._condvar.acquire()
+            while self.asteroid.dev.connected:
+                self._condvar.wait(10)
+            self._condvar.release()
+            dt = time.time() - self._last_connected
+            if dt > self.config["timeout_reset"]:
+                self._timeout = 0
+            if self._timeout > 0:
+                self.logger.info("Reconnecting in %d seconds..." % self._timeout)
+                time.sleep(self._timeout)
+            else:
+                self.logger.info("Reconnecting...")
+            self.asteroid.connect()
+            self._timeout = min(self._timeout + self.config["timeout_base"],
+                                self.config["timeout_max"])
+            self.logger.info("Connected!")
 
     def _properties_changed(self, name, changed, lst):
         if not changed.get("Connected", True):
-            self._start_reconnect_async()
+            self._condvar.acquire()
+            self._condvar.notify()
+            self._condvar.release()
+        elif changed.get("Connected", False):
+            self._last_connected = time.time()
 
 
 class NotifyModule(Module):
