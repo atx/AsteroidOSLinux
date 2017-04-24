@@ -46,9 +46,9 @@ class Asteroid:
                     # Problematically, dbus calls block the entire event loop
                     # TODO: Fix this
                     self.dev.connect()
-                except Exception as e:
-                    if e.args[0] != "GDBus.Error:org.bluez.Error.Failed: Operation already in progress (36)":
-                        raise
+                except GLib.GError:
+                    # Just ignore everything for now
+                    pass
             else:
                 time.sleep(0.1)
 
