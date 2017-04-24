@@ -77,7 +77,7 @@ class BLEDevice(DbusWrapper):
         for c in self.characteristics:
             if c.uuid == uuid:
                 return c
-        raise IOError("UUID not present on the device")
+        raise IOError("UUID '%s' not present on the device" % uuid)
 
 
 class BLE(DbusWrapper):
@@ -92,7 +92,7 @@ class BLE(DbusWrapper):
         for dev in self.devices:
             if dev.address == address:
                 return dev
-        raise IOError("Device with address %s not found" % dev.address)
+        raise IOError("Device with address %s not found" % address)
 
     @property
     def devices(self):
