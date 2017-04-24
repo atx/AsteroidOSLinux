@@ -16,18 +16,7 @@ def ensure_connected(fn):
     def wrapper(self, *args, **kwargs):
         # Note that this does not really strongly guarantee anything as the
         # device can disconnect at any time
-        # We also want to wait until services are resolved
-        while not self.dev.connected or not self.dev.services_resolved:
-            if not self.dev.connected:
-                try:
-                    # Problematically, dbus calls block the entire event loop
-                    # TODO: Fix this
-                    self.dev.connect()
-                except Exception as e:
-                    if e.args[0] != "GDBus.Error:org.bluez.Error.Failed: Operation already in progress'":
-                        raise
-            else:
-                time.sleep(0.1)
+        self.connect()
         ret = fn(self, *args, **kwargs)
         # Do we want to schedule a disconnect? Or is BLE low power enough?
         return ret
@@ -48,6 +37,20 @@ class Asteroid:
         self.dev = self.ble.device_by_address(self.address)
         self.disconnect_timeout = None
         self._disconnect_id = None
+
+    def connect(self):
+        # We also want to wait until services are resolved
+        while not self.dev.connected or not self.dev.services_resolved:
+            if not self.dev.connected:
+                try:
+                    # Problematically, dbus calls block the entire event loop
+                    # TODO: Fix this
+                    self.dev.connect()
+                except Exception as e:
+                    if e.args[0] != "GDBus.Error:org.bluez.Error.Failed: Operation already in progress (36)":
+                        raise
+            else:
+                time.sleep(0.1)
 
     @ensure_connected
     def battery_level(self):

@@ -8,30 +8,13 @@ import queue
 import cmd
 import threading
 import functools
+import logging
+import yaml
+import os
+import sys
 from gi.repository import GLib
+from asteroid.module import *
 from asteroid import *
-
-
-# TODO: Eh, probably hook this up with the logging module or something
-class Print:
-
-    @staticmethod
-    @functools.lru_cache(10)
-    def _prefix(prefix, color):
-        return colorama.Style.RESET_ALL + "[" + color + prefix + \
-            colorama.Style.RESET_ALL + "]"
-
-    @staticmethod
-    @functools.wraps(print)
-    def info(*args, **kwargs):
-        print(Print._prefix("INF", colorama.Fore.LIGHTBLUE_EX), *args,
-              **kwargs)
-
-    @staticmethod
-    @functools.wraps(print)
-    def response(*args, **kwargs):
-        print(Print._prefix("RSP", colorama.Fore.LIGHTGREEN_EX), *args,
-              **kwargs)
 
 
 def in_glib(fn):
@@ -60,15 +43,16 @@ class AsteroidCmd(cmd.Cmd):
         self.asteroid.dev.properties_changed.connect(self._changed_callback)
         self.loop = loop
         self.exiting = False
+        self.logger = logging.getLogger()
 
     def _changed_callback(self, name, changed, lst):
         for k, v in changed.items():
-            Print.info("Changed %s = %s" % (k, v))
+            self.logger.debug("Changed %s = %s" % (k, v))
 
     @in_glib
     def do_battery(self, line):
         """ Fetches and prints the battery level """
-        Print.response("Battery = %d" % self.asteroid.battery_level())
+        logger.info("Battery = %d" % self.asteroid.battery_level())
 
     @in_glib
     def do_update_time(self, line):
@@ -78,9 +62,9 @@ class AsteroidCmd(cmd.Cmd):
             dt = datetime.datetime.strptime(line, "%Y-%m-%d %T")
         self.asteroid.update_time(dt)
         if dt:
-            Print.response("Set time to " + dt.isoformat(" "))
+            logger.info("Set time to " + dt.isoformat(" "))
         else:
-            Print.response("Set time local time")
+            logger.info("Set time local time")
 
     def do_ipython(self, line):
         import IPython
@@ -106,6 +90,53 @@ class CmdThread(threading.Thread):
         self.cmd.cmdloop("")
 
 
+class LogFormatter(logging.Formatter):
+
+    @staticmethod
+    @functools.lru_cache(10)
+    def _prefix(prefix, color):
+        return colorama.Style.RESET_ALL + "[" + color + prefix + \
+            colorama.Style.RESET_ALL + "]"
+
+    _namecolors = {
+        "DEBUG": ("DBG", colorama.Fore.LIGHTWHITE_EX),
+        "INFO": ("INF", colorama.Fore.LIGHTBLUE_EX),
+        "WARNING": ("WRN", colorama.Fore.LIGHTYELLOW_EX),
+        "ERROR": ("ERR", colorama.Fore.LIGHTRED_EX),
+        "CRITICAL": ("CRT", colorama.Fore.LIGHTRED_EX),
+        "UNKNOWN": ("???", colorama.Fore.LIGHTWHITE_EX)
+    }
+
+    def format(self, record):
+        prefix = LogFormatter._prefix(
+                    *LogFormatter._namecolors.get(
+                                    record.levelname,
+                                    LogFormatter._namecolors["DEBUG"]))
+        return prefix + " " + super(LogFormatter, self).format(record)
+
+
+def setup_logging(verbose):
+    syslog = logging.StreamHandler(sys.stderr)
+    formatter = LogFormatter()
+    syslog.setFormatter(formatter)
+    logger = logging.getLogger()
+    logger.setLevel(logging.DEBUG if verbose else logging.INFO)
+    logger.addHandler(syslog)
+    return logger
+
+
+# We want to have this in string form so we can auto-create a
+# (nicely formatted) config later
+default_config_str = """
+asteroid:
+    address: "SET_ME"
+
+modules:
+    timesync: {}
+    reconnect: {}
+    notify: {}
+"""
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="AsteroidOSLinux")
@@ -119,37 +150,49 @@ if __name__ == "__main__":
         action="store_true",
         help="Drop to IPython shell instead of GLib event loop"
     )
+    parser.add_argument(
+        "-c", "--config",
+        default="~/.config/asteroidoslinux/config.yaml",
+        type=os.path.expanduser,
+        help="Set config file path"
+    )
+    parser.add_argument(
+        "-v", "--verbose",
+        action="store_true",
+        help="Enable debug output"
+    )
+    parser.add_argument(
+        "--rewrite-default-config",
+        action="store_true",
+        help="Overwrite the config file with the default configuration"
+    )
 
     args = parser.parse_args()
+    logger = setup_logging(verbose=args.verbose)
+
+    if not os.path.exists(args.config) or args.rewrite_default_config:
+        os.makedirs(os.path.dirname(args.config), exist_ok=True)
+        with open(args.config, "w") as f:
+            f.write(default_config_str)
+        logger.info("Created new config file in %s" % os.path.abspath(args.config))
+
+    with open(args.config) as f:
+        config = yaml.load(f)
+
+    logger.info("Loaded config file from %s" % os.path.abspath(args.config))
 
     session_bus = dbus.SessionBus()
     asteroid = Asteroid(args.address)
 
-    pending_notifications = queue.Queue()
+    modules = []
+    for modname in [n for n in config["modules"]]:
+        if modname not in MetaModule.registry:
+            logger.error("Module %s not known!" % modname)
+            sys.exit(-1)
+        modules.append(MetaModule.registry[modname](asteroid,
+                                                    config["modules"][modname]))
 
-    def notification_sender():
-        try:
-            msg = pending_notifications.get_nowait()
-            app_name, id_, app_icon, summary, body, actions, hints, \
-                expiration = msg.get_body()
-            asteroid.notify(summary, body=body, id_=(id_ if id_ else None),
-                            app_name=app_name, app_icon=app_icon)
-            Print.info("Sent notification '%s'" % summary)
-        except queue.Empty:
-            pass
-        return bool(pending_notifications.qsize())
-
-    def on_notification(msg):
-        # Note: Not sure which thread context is this getting executed in,
-        # but the event loop _does not_ have to be running for this to be
-        # called. This is why the Queue is needed.
-        pending_notifications.put(msg)
-        GLib.idle_add(notification_sender)
-
-    notify_eavesdropper = DBusEavesdropper(session_bus,
-                                           "org.freedesktop.Notifications",
-                                           "Notify",
-                                           on_notification)
+    logger.info("Loaded modules %s" % ", ".join(map(lambda m: m.name, modules)))
 
     loop = GLib.MainLoop(GLib.main_context_default())
     if args.interactive:
