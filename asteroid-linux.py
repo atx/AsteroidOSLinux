@@ -141,11 +141,6 @@ modules:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="AsteroidOSLinux")
     parser.add_argument(
-        "-a", "--address",
-        required=True,
-        help="Bluetooth address of the device"
-    )
-    parser.add_argument(
         "-i", "--interactive",
         action="store_true",
         help="Drop to IPython shell instead of GLib event loop"
@@ -181,8 +176,9 @@ if __name__ == "__main__":
 
     logger.info("Loaded config file from %s" % os.path.abspath(args.config))
 
+    logger.info("Using device address %s" % config["asteroid"]["address"])
     session_bus = dbus.SessionBus()
-    asteroid = Asteroid(args.address)
+    asteroid = Asteroid(config["asteroid"]["address"])
 
     modules = []
     for modname in [n for n in config["modules"]]:
