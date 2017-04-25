@@ -76,7 +76,9 @@ class ReconnectModule(Module):
         self._last_connected = 0.0
         self._timeout = 0
         self._condvar = threading.Condition()
-        threading.Thread(target=self._reconnect_fn).start()
+        self._thread = threading.Thread(target=self._reconnect_fn)
+        self._thread.daemon = True
+        self._thread.start()
 
     def _reconnect_fn(self):
         while True:
