@@ -1,5 +1,6 @@
 
 import argparse
+import collections
 import datetime
 import functools
 import itertools
@@ -23,6 +24,38 @@ def ensure_connected(fn):
     return wrapper
 
 
+class WeatherPredictions:
+
+    Prediction = collections.namedtuple("Prediction", ["id_", "min_", "max_"])
+
+    MAX_LEN = 5
+
+    def __init__(self, city_name):
+        self.city_name = city_name
+        self.values = []
+
+    def append_prediction(self, id_, min_, max_):
+        if len(self.values) >= WeatherPredictions.MAX_LEN:
+            raise ValueError("Maximum length exceeded")
+        self.values.append(WeatherPredictions.Prediction(
+                                    id_=id_, min_=min_, max_=max_))
+
+    @classmethod
+    def from_owm(class_, owmforecast):
+        # We will get None if the name is no
+        loc = owmforecast.get_location()
+        name = loc.get_name()
+        if not name:
+            name = "%.3f %.3f" % (loc.get_lat(), loc.get_lon())
+        ret = class_(name)
+        for x in range(WeatherPredictions.MAX_LEN):
+            w = owmforecast.get(x)
+            ret.append_prediction(w.get_weather_code(),
+                                  w.get_temperature()["min"],
+                                  w.get_temperature()["max"])
+        return ret
+
+
 class Asteroid:
 
     UUID_BATTERY = "00002a19-0000-1000-8000-00805f9b34fb"
@@ -30,6 +63,10 @@ class Asteroid:
     UUID_SCREENSHOT_REQ = "00006001-0000-0000-0000-00a57e401d05"
     UUID_SCREENSHOT_RESP = "00006002-0000-0000-0000-00a57e401d05"
     UUID_NOTIF_UPD = "00009001-0000-0000-0000-00a57e401d05"
+    UUID_WEATHER_CITY = "00008001-0000-0000-0000-00a57e401d05"
+    UUID_WEATHER_IDS = "00008002-0000-0000-0000-00a57e401d05"
+    UUID_WEATHER_MINT = "00008003-0000-0000-0000-00a57e401d05"
+    UUID_WEATHER_MAXT = "00008004-0000-0000-0000-00a57e401d05"
 
     def __init__(self, address):
         self.ble = bleee.BLE()
@@ -103,6 +140,18 @@ class Asteroid:
         data = xml.etree.ElementTree.tostring(xinsert)
         self.dev.char_by_uuid(Asteroid.UUID_NOTIF_UPD).write(data)
         return id_
+
+    @ensure_connected
+    def update_weather(self, predictions):
+        # Set city name
+        self.dev.char_by_uuid(Asteroid.UUID_WEATHER_CITY).write(
+            predictions.city_name.encode())
+        self.dev.char_by_uuid(Asteroid.UUID_WEATHER_IDS).write(
+            struct.pack(">5H", *[round(p.id_) for p in predictions.values]))
+        self.dev.char_by_uuid(Asteroid.UUID_WEATHER_MINT).write(
+            struct.pack(">5H", *[round(p.min_) for p in predictions.values]))
+        self.dev.char_by_uuid(Asteroid.UUID_WEATHER_MAXT).write(
+            struct.pack(">5H", *[round(p.max_) for p in predictions.values]))
 
 
 class DBusEavesdropper:
