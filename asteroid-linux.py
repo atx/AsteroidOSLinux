@@ -76,6 +76,9 @@ class AsteroidCmd(cmd.Cmd):
 
     do_EOF = do_exit
 
+    def emptyline(self):
+        pass
+
     def postcmd(self, stop, line):
         return self.exiting
 
