@@ -21,23 +21,20 @@ def merge_dicts(first, second):
 
 class MetaModule(type):
 
-    # TODO: We probably want to have this a bit more sophisticated solution in
-    # the future
-    registry = dict()
-
     def __init__(self, name, bases, dict_):
         self.logger = logging.getLogger(name)
-        if bases:
-            MetaModule.registry[self.name] = self
 
 
 class Module(metaclass=MetaModule):
 
     defconfig = dict()
 
-    def __init__(self, asteroid, config):
-        self.asteroid = asteroid
-        self.config = merge_dicts(self.defconfig, config)
+    def __init__(self, **kwargs):
+        self.config = merge_dicts(self.defconfig, kwargs)
+
+    def register(self, app):
+        self.app = app
+        self.asteroid = app.asteroid
         self.asteroid.dev.properties_changed.connect(self._properties_changed)
 
     def _properties_changed(self, name, changed, lst):
@@ -46,10 +43,8 @@ class Module(metaclass=MetaModule):
 
 class TimeSyncModule(Module):
 
-    name = "timesync"
-
-    def __init__(self, asteroid, config):
-        super(TimeSyncModule, self).__init__(asteroid, config)
+    def register(self, app):
+        super(TimeSyncModule, self).register(app)
         # We want to do this on startup, but as the dbus-is-blocking issues is
         # not solved yet, be careful
         if self.asteroid.dev.connected:
@@ -66,18 +61,20 @@ class TimeSyncModule(Module):
 
 class ReconnectModule(Module):
 
-    name = "reconnect"
     defconfig = {"timeout_base": 5,
                  "timeout_max": 300,
                  "timeout_reset": 120}
 
-    def __init__(self, asteroid, config):
-        super(ReconnectModule, self).__init__(asteroid, config)
+    def __init__(self, **kwargs):
+        super(ReconnectModule, self).__init__(**kwargs)
         self._last_connected = 0.0
         self._timeout = 0
         self._condvar = threading.Condition()
         self._thread = threading.Thread(target=self._reconnect_fn)
         self._thread.daemon = True
+
+    def register(self, app):
+        super(ReconnectModule, self).register(app)
         self._thread.start()
 
     def _reconnect_fn(self):
@@ -110,10 +107,8 @@ class ReconnectModule(Module):
 
 class NotifyModule(Module):
 
-    name = "notify"
-
-    def __init__(self, asteroid, config):
-        super(NotifyModule, self).__init__(asteroid, config)
+    def register(self, app):
+        super(NotifyModule, self).register(app)
         self._pending = queue.Queue()
         self._eavesdropper = DBusEavesdropper(
                                     dbus.SessionBus(),
