@@ -3,8 +3,9 @@ import time
 import logging
 import queue
 import threading
+import pyowm
 import pydbus as dbus
-from asteroid import DBusEavesdropper
+from asteroid import DBusEavesdropper, WeatherPredictions
 from gi.repository import GLib
 
 
@@ -132,3 +133,28 @@ class NotifyModule(Module):
     def _on_notification(self, msg):
         self._pending.put(msg)
         GLib.idle_add(self._notification_send)
+
+
+class OWMModule(Module):
+
+    defconfig = {"update_interval": 2 * 60 * 60 }
+
+    def __init__(self, **kwargs):
+        super(OWMModule, self).__init__(**kwargs)
+        self._owm = pyowm.OWM(self.config["api_key"])
+
+    def register(self, app):
+        super(OWMModule, self).register(app)
+        self._update_weather()
+        GLib.timeout_add_seconds(self.config["update_interval"], self._update_weather)
+
+    def _update_weather(self):
+        try:
+            # TODO: Eventually, autodetecting the location would be nice
+            forecast = self._owm.daily_forecast(self.config["location"]).get_forecast()
+            preds = WeatherPredictions.from_owm(forecast)
+            self.asteroid.update_weather(preds)
+            self.logger.info("Weather update sent")
+        except Exception as e:
+            self.logger.error("Weather update failed with %s" % e)
+        return True
