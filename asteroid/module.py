@@ -165,55 +165,88 @@ class MPDModule(Module):
 
     defconfig = {
         "host": "127.0.0.1",
-        "port": 6600
+        "port": 6600,
+        "reconnect_period": 5
     }
 
     def __init__(self, **kwargs):
         super(MPDModule, self).__init__(**kwargs)
-        # We actually make two MPD connections, one for watching changes and
-        # other for sending commands.
-        self._mpd = self._make_mpd()
-        self._mpd_watch = self._make_mpd()
+        self._mpd_watch = self._make_mpd(connect=False)
 
-    def _make_mpd(self):
+    def _properties_changed(self, name, changed, lst):
+        if changed.get("Connected", False):
+            self._send_update()
+
+    def _make_mpd(self, connect=True):
         cl = mpd.MPDClient()
         cl.timeout = 10
-        cl.connect(self.config["host"], self.config["port"])
+        if connect:
+            cl.connect(self.config["host"], self.config["port"])
         return cl
 
     def register(self, app):
         super(MPDModule, self).register(app)
         self.asteroid.register_media_listener(self._command_cb)
+        GLib.timeout_add_seconds(self.config["reconnect_period"], self._mpd_reconnect)
+
+    def _mpd_connection_error_cb(self, src=None, cond=None):
+        self.logger.warn("MPD connection error, scheduling reconnect")
+        GLib.timeout_add_seconds(self.config["reconnect_period"],
+                                 self._mpd_reconnect)
+        return False
+
+    def _mpd_reconnect(self):
+        try:
+            self._mpd_watch.connect(self.config["host"], self.config["port"])
+        except ConnectionRefusedError as e:
+            return True
+        except mpd.ConnectionError:
+            return False
+        self.logger.info("MPD connected")
         self._send_update()
         self._mpd_watch.send_idle()
+        GLib.io_add_watch(self._mpd_watch, GLib.IO_ERR | GLib.IO_HUP | GLib.IO_NVAL,
+                          self._mpd_connection_error_cb)
         GLib.io_add_watch(self._mpd_watch, GLib.IO_IN, self._mpd_cb)
+        return False
 
     def _send_update(self):
-        song = self._mpd.currentsong()
-        status = self._mpd.status()
-        self.asteroid.update_media(
-            song.get("title", "Unknown"),
-            song.get("album", "Unknown"),
-            song.get("artist", "Unknown"),
-            status["state"] == "play"
-        )
+        try:
+            song = self._mpd_watch.currentsong()
+            status = self._mpd_watch.status()
+            self.asteroid.update_media(
+                song.get("title", "Unknown"),
+                song.get("album", "Unknown"),
+                song.get("artist", "Unknown"),
+                status["state"] == "play"
+            )
+        except mpd.ConnectionError as e:
+            self.logger.warn("Attempt to update MPD status failed with %r" % e)
 
     def _mpd_cb(self, src, cond):
-        # We disregard the changes and just send everything
-        changes = self._mpd_watch.fetch_idle()
-        if "player" in changes:
-            self._send_update()
-        self._mpd_watch.send_idle()
+        try:
+            changes = self._mpd_watch.fetch_idle()
+            if "player" in changes:
+                self._send_update()
+            self._mpd_watch.send_idle()
+        except (mpd.ConnectionError, mpd.PendingCommandError) as e:
+            self.logger.warn("MPD idle fetch failed with %r" % e)
+            return False
         return True
 
     def _command_cb(self, cmd):
-        if cmd == Asteroid.MEDIA_COMMAND_PREVIOUS:
-            self._mpd.previous()
-        elif cmd == Asteroid.MEDIA_COMMAND_NEXT:
-            self._mpd.next()
-        elif cmd == Asteroid.MEDIA_COMMAND_PLAY:
-            self._mpd.play()
-        elif cmd == Asteroid.MEDIA_COMMAND_PAUSE:
-            self._mpd.pause()
-        else:
-            self.logger.error("Unknown media command code %02x" % cmd)
+        try:
+            mpd = self._make_mpd()
+            if cmd == Asteroid.MEDIA_COMMAND_PREVIOUS:
+                mpd.previous()
+            elif cmd == Asteroid.MEDIA_COMMAND_NEXT:
+                mpd.next()
+            elif cmd == Asteroid.MEDIA_COMMAND_PLAY:
+                mpd.play()
+            elif cmd == Asteroid.MEDIA_COMMAND_PAUSE:
+                mpd.pause()
+            else:
+                self.logger.error("Unknown media command code %02x" % cmd)
+            mpd.close()
+        except Exception as e:
+            self.logger.warn("Attempted to send media command %02x but failed with %r" % (cmd, e))
