@@ -67,6 +67,16 @@ class Asteroid:
     UUID_WEATHER_IDS = "00008002-0000-0000-0000-00a57e401d05"
     UUID_WEATHER_MINT = "00008003-0000-0000-0000-00a57e401d05"
     UUID_WEATHER_MAXT = "00008004-0000-0000-0000-00a57e401d05"
+    UUID_MEDIA_TITLE = "00007001-0000-0000-0000-00a57e401d05"
+    UUID_MEDIA_ALBUM = "00007002-0000-0000-0000-00a57e401d05"
+    UUID_MEDIA_ARTIST = "00007003-0000-0000-0000-00a57e401d05"
+    UUID_MEDIA_PLAY = "00007004-0000-0000-0000-00a57e401d05"
+    UUID_MEDIA_COMM = "00007005-0000-0000-0000-00a57e401d05"
+
+    MEDIA_COMMAND_PREVIOUS = 0x0
+    MEDIA_COMMAND_NEXT = 0x1
+    MEDIA_COMMAND_PLAY = 0x2
+    MEDIA_COMMAND_PAUSE = 0x3
 
     def __init__(self, address):
         self.ble = bleee.BLE()
@@ -152,6 +162,23 @@ class Asteroid:
             struct.pack(">5H", *[round(p.min_) for p in predictions.values]))
         self.dev.char_by_uuid(Asteroid.UUID_WEATHER_MAXT).write(
             struct.pack(">5H", *[round(p.max_) for p in predictions.values]))
+
+    def update_media(self, title, album, artist, playing):
+        self.dev.char_by_uuid(Asteroid.UUID_MEDIA_TITLE).write(title.encode())
+        self.dev.char_by_uuid(Asteroid.UUID_MEDIA_ALBUM).write(album.encode())
+        self.dev.char_by_uuid(Asteroid.UUID_MEDIA_ARTIST).write(artist.encode())
+        self.dev.char_by_uuid(Asteroid.UUID_MEDIA_PLAY).write(
+            b"\x01" if playing else b"\x00")
+
+    def register_media_listener(self, fn):
+        # TODO: A way to unregister
+        ccomm = self.dev.char_by_uuid(Asteroid.UUID_MEDIA_COMM)
+        def cb(name, vals, lst):
+            if not "Value" in vals:
+                return
+            fn(vals["Value"][0])
+        ccomm.properties_changed.connect(cb)
+        ccomm.start_notify()
 
 
 class DBusEavesdropper:

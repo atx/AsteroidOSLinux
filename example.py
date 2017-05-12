@@ -29,6 +29,7 @@ app.register_module(ReconnectModule(timeout_base=10))
 app.register_module(TimeSyncModule())
 app.register_module(NotifyModule())
 app.register_module(OWMModule(api_key=OWM_KEY, location=OWM_LOCATION))
+app.register_module(MPDModule())
 
 if args.interactive:
     import IPython

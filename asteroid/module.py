@@ -3,9 +3,10 @@ import time
 import logging
 import queue
 import threading
+import mpd
 import pyowm
 import pydbus as dbus
-from asteroid import DBusEavesdropper, WeatherPredictions
+from asteroid import Asteroid, DBusEavesdropper, WeatherPredictions
 from gi.repository import GLib
 
 
@@ -158,3 +159,61 @@ class OWMModule(Module):
         except Exception as e:
             self.logger.error("Weather update failed with %s" % e)
         return True
+
+
+class MPDModule(Module):
+
+    defconfig = {
+        "host": "127.0.0.1",
+        "port": 6600
+    }
+
+    def __init__(self, **kwargs):
+        super(MPDModule, self).__init__(**kwargs)
+        # We actually make two MPD connections, one for watching changes and
+        # other for sending commands.
+        self._mpd = self._make_mpd()
+        self._mpd_watch = self._make_mpd()
+
+    def _make_mpd(self):
+        cl = mpd.MPDClient()
+        cl.timeout = 10
+        cl.connect(self.config["host"], self.config["port"])
+        return cl
+
+    def register(self, app):
+        super(MPDModule, self).register(app)
+        self.asteroid.register_media_listener(self._command_cb)
+        self._send_update()
+        self._mpd_watch.send_idle()
+        GLib.io_add_watch(self._mpd_watch, GLib.IO_IN, self._mpd_cb)
+
+    def _send_update(self):
+        song = self._mpd.currentsong()
+        status = self._mpd.status()
+        self.asteroid.update_media(
+            song.get("title", "Unknown"),
+            song.get("album", "Unknown"),
+            song.get("artist", "Unknown"),
+            status["state"] == "play"
+        )
+
+    def _mpd_cb(self, src, cond):
+        # We disregard the changes and just send everything
+        changes = self._mpd_watch.fetch_idle()
+        if "player" in changes:
+            self._send_update()
+        self._mpd_watch.send_idle()
+        return True
+
+    def _command_cb(self, cmd):
+        if cmd == Asteroid.MEDIA_COMMAND_PREVIOUS:
+            self._mpd.previous()
+        elif cmd == Asteroid.MEDIA_COMMAND_NEXT:
+            self._mpd.next()
+        elif cmd == Asteroid.MEDIA_COMMAND_PLAY:
+            self._mpd.play()
+        elif cmd == Asteroid.MEDIA_COMMAND_PAUSE:
+            self._mpd.pause()
+        else:
+            self.logger.error("Unknown media command code %02x" % cmd)
