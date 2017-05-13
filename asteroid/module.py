@@ -140,10 +140,6 @@ class OWMModule(Module):
 
     defconfig = {"update_interval": 2 * 60 * 60 }
 
-    def __init__(self, **kwargs):
-        super(OWMModule, self).__init__(**kwargs)
-        self._owm = pyowm.OWM(self.config["api_key"])
-
     def register(self, app):
         super(OWMModule, self).register(app)
         self._update_weather()
@@ -151,13 +147,16 @@ class OWMModule(Module):
 
     def _update_weather(self):
         try:
+            owm = pyowm.OWM(self.config["api_key"])
             # TODO: Eventually, autodetecting the location would be nice
-            forecast = self._owm.daily_forecast(self.config["location"]).get_forecast()
+            forecast = owm.daily_forecast(self.config["location"]).get_forecast()
             preds = WeatherPredictions.from_owm(forecast)
             self.asteroid.update_weather(preds)
             self.logger.info("Weather update sent")
         except Exception as e:
-            self.logger.error("Weather update failed with %s" % e)
+            # We can't str the exception directly, because a bug in PyOWM python3
+            # support would lead to another exception
+            self.logger.error("Weather update failed with %s" % type(e))
         return True
 
 
